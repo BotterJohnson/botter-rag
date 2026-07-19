@@ -1,0 +1,15 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Java / Maven build output
+target/
+
+# IDE files
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
