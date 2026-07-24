@@ -6,6 +6,13 @@
 # Java / Maven build output
 target/
 
+# Frontend dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
 # IDE files
 .idea/
 *.iml

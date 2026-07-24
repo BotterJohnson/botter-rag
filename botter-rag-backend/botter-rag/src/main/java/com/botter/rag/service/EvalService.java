@@ -122,8 +122,9 @@ public class EvalService {
 
         if (question.getExpectedAnswer() != null) {
             // 每题用一次性会话 ID：syncQuery 会注入会话历史（见流式那节），
-            // 复用同一个 "eval-session" 会把前一题的问答当历史带进来，污染评估结果
-            String evalSessionId = "eval-" + UUID.randomUUID();
+            // 复用同一个会话会把前一题的问答当历史带进来，污染评估结果。
+            // kb_chat_session/kb_chat_message.session_id 是 VARCHAR(36)，这里必须保持 UUID 原长。
+            String evalSessionId = UUID.randomUUID().toString();
             RagResponse response = ragService.syncQuery(
                     question.getQuestion(), List.of(kbId), evalSessionId);
             actualAnswer = response.getAnswer();
