@@ -1,0 +1,11 @@
+# Local development override: reuse PostgreSQL and Redis already published
+# by Docker containers on the host. The base Compose file remains suitable
+# for a self-contained production deployment.
+services:
+  app:
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://host.docker.internal:5432/ragkb
+      REDIS_HOST: host.docker.internal
+    depends_on: !override
+      minio:
+        condition: service_healthy

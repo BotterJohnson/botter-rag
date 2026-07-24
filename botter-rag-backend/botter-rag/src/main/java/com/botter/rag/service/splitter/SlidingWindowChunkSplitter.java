@@ -19,6 +19,7 @@ import java.util.List;
 public class SlidingWindowChunkSplitter implements ChunkSplitter{
     @Override
     public List<ChunkResult> split(ParseResult parseResult, ChunkConfig config) {
+        validateInputs(parseResult, config);
         List<ChunkResult> chunks = new ArrayList<>();
         int chunkIndex = 0;
         for (ParseResult.PageContent pageContent : parseResult.getPages()) {
@@ -50,6 +51,20 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter{
                                        .mapToInt(c -> c.getContent().length()).average().orElse(0));
 
         return chunks;
+    }
+
+    /** 独立调用分块器时同样执行校验，不能只依赖 ChunkService 入口。 */
+    private void validateInputs(ParseResult parseResult, ChunkConfig config) {
+        if (parseResult == null) {
+            throw new IllegalArgumentException("parseResult must not be null");
+        }
+        if (parseResult.getPages() == null) {
+            throw new IllegalArgumentException("parseResult.pages must not be null");
+        }
+        if (config == null) {
+            throw new IllegalArgumentException("config must not be null");
+        }
+        config.validate();
     }
 
     private List<String> splitText(String text, int chunkSize, int overlap) {

@@ -1,0 +1,169 @@
+
+---
+
+## 一、docker-compose.yml
+
+#  ```yaml
+# Docker Compose v2 不再需要顶层 version 字段，写了反而会被警告 "obsolete"
+# 所有服务共用一个自定义 bridge 网络，名字清楚点便于排查
+name: ragkb
+
+networks:
+  ragkb-net:
+    driver: bridge
+
+services:
+
+  # ========== PostgreSQL + PGVector ==========
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ragkb-postgres
+    environment:
+      POSTGRES_DB: ragkb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # ⚠ 以下两个脚本只在 postgres_data 卷为空时才执行
+      # 改了 schema.sql 要生效，必须先 docker compose down -v 清空数据卷再 up
+      - ../src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../src/main/resources/db/data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragkb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+  # ========== Redis ==========
+  redis:
+    image: redis:7.4-alpine
+    container_name: ragkb-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+  # ========== MinIO（文件存储） ==========
+  minio:
+    # 不要用 :latest，线上 pull 下来的版本漂移会把配置兼容性搞炸
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: ragkb-minio
+    ports:
+      - "9000:9000"    # S3 API 端口
+      - "9001:9001"    # 控制台端口
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    # ⚠ minio/minio 镜像是从 scratch 构建的，没有 curl/wget
+    # 用 MinIO 内置的 mc 客户端检查，这是官方推荐的方式
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+  # ========== Spring Boot 应用 ==========
+  app:
+    build:
+      context: ..
+      dockerfile: docker-builder/DockerFile
+    container_name: ragkb-app
+    env_file:
+      - ../.env
+    ports:
+      - "8090:8090"
+    environment:
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-123456}
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - DASHSCOPE_API_KEY=${AI_DASHSCOPE_API_KEY:-${DASHSCOPE_API_KEY:-}}
+      - SPRING_PROFILES_ACTIVE=prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # 给应用容器做资源限制，防止 OOM 把宿主机带倒
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          memory: 1G
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+  # ========== Prometheus ==========
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: ragkb-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+  # ========== Grafana ==========
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: ragkb-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # provisioning：datasource + dashboard provider 的 YAML 配置
+      - ../docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      # dashboard JSON 文件的实际存放位置，provider YAML 里会指向它
+      - ../docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks: [ragkb-net]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

@@ -1,22 +1,28 @@
 package com.botter.DocumentTest;
 
-import com.botter.rag.BotterRapApplication;
 import com.botter.rag.service.ChunkService;
 import com.botter.rag.service.loader.ParseResult;
+import com.botter.rag.service.splitter.ChunkConfig;
 import com.botter.rag.service.splitter.ChunkResult;
+import com.botter.rag.service.splitter.SlidingWindowChunkSplitter;
+import com.botter.rag.service.splitter.StructureAwareChunkSplitter;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest(classes = BotterRapApplication.class)
 class ChunkServiceTest {
 
-    @Autowired
     private ChunkService chunkService;
+
+    @BeforeEach
+    void setUp() {
+        SlidingWindowChunkSplitter slidingSplitter = new SlidingWindowChunkSplitter();
+        chunkService = new ChunkService(slidingSplitter, new StructureAwareChunkSplitter(slidingSplitter));
+    }
 
     @Test
     void chunksNotTooLargeOrTooSmall() {
@@ -48,5 +54,83 @@ class ChunkServiceTest {
             String overlapPart = end0.substring(Math.max(0, end0.length() - 64));
             assertThat(start1).contains(overlapPart.substring(0, Math.min(30, overlapPart.length())));
         }
+    }
+
+    @Test
+    void rejectsInvalidConfigBeforeSplitting() {
+        ParseResult result = successfulResult("有效正文内容".repeat(10));
+
+        assertThatThrownBy(() -> chunkService.chunk(result, ChunkConfig.builder()
+                .chunkSize(0)
+                .chunkOverlap(0)
+                .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("chunkSize");
+
+        assertThatThrownBy(() -> chunkService.chunk(result, ChunkConfig.builder()
+                .chunkSize(20)
+                .chunkOverlap(20)
+                .build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("chunkOverlap");
+    }
+
+    @Test
+    void reindexesChunksAfterShortFragmentsAreRemoved() {
+        SlidingWindowChunkSplitter splitter = new SlidingWindowChunkSplitter() {
+            @Override
+            public List<ChunkResult> split(ParseResult parseResult, ChunkConfig config) {
+                return List.of(
+                        chunk(4, "第一页的有效正文内容足够长，应该被正常保留下来。", 1),
+                        chunk(8, "短片段", 2),
+                        chunk(12, "第三页的有效正文内容足够长，也应该被正常保留。", 3));
+            }
+        };
+        ChunkService service = new ChunkService(splitter, new StructureAwareChunkSplitter(splitter));
+
+        List<ChunkResult> chunks = service.chunk(successfulResult("用于选择滑动窗口策略的正文"));
+
+        assertThat(chunks).extracting(ChunkResult::getChunkIndex).containsExactly(0, 1);
+        assertThat(chunks).extracting(ChunkResult::getPageNum).containsExactly(1, 3);
+    }
+
+    @Test
+    void mergesShortFragmentWithCompatiblePreviousChunk() {
+        SlidingWindowChunkSplitter splitter = new SlidingWindowChunkSplitter() {
+            @Override
+            public List<ChunkResult> split(ParseResult parseResult, ChunkConfig config) {
+                return List.of(
+                        chunk(0, "同一页中的有效正文内容已经超过最小长度。", 1),
+                        chunk(1, "补充内容", 1));
+            }
+        };
+        ChunkService service = new ChunkService(splitter, new StructureAwareChunkSplitter(splitter));
+
+        List<ChunkResult> chunks = service.chunk(successfulResult("用于选择滑动窗口策略的正文"));
+
+        assertThat(chunks).singleElement().satisfies(chunk -> {
+            assertThat(chunk.getChunkIndex()).isZero();
+            assertThat(chunk.getContent()).contains("有效正文", "补充内容");
+        });
+    }
+
+    private ParseResult successfulResult(String text) {
+        return ParseResult.builder()
+                .success(true)
+                .pages(List.of(ParseResult.PageContent.builder()
+                        .pageNum(1)
+                        .text(text)
+                        .build()))
+                .totalPages(1)
+                .build();
+    }
+
+    private ChunkResult chunk(int index, String content, int pageNum) {
+        return ChunkResult.builder()
+                .chunkIndex(index)
+                .content(content)
+                .pageNum(pageNum)
+                .estimatedTokens(content.length())
+                .build();
     }
 }

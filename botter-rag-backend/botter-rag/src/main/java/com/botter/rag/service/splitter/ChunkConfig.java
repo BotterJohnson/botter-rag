@@ -22,4 +22,15 @@ public class ChunkConfig {
     public static ChunkConfig defaultConfig() {
         return ChunkConfig.builder().build();
     }
+
+    /** 校验分块参数，避免窗口无法向前推进或跳过正文。 */
+    public void validate() {
+        if (chunkSize <= 0) {
+            throw new IllegalArgumentException("chunkSize must be greater than 0");
+        }
+        if (chunkOverlap < 0 || chunkOverlap >= chunkSize) {
+            throw new IllegalArgumentException(
+                    "chunkOverlap must be greater than or equal to 0 and less than chunkSize");
+        }
+    }
 }

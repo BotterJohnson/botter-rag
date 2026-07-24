@@ -12,6 +12,7 @@
   <name>botter-rag-knowledge-base</name>
   <properties>
     <java.version>21</java.version>
+    <maven.compiler.proc>full</maven.compiler.proc>
     <spring-ai.version>1.1.2</spring-ai.version>
   </properties>
   <dependencyManagement>

@@ -1,0 +1,24 @@
+# 直接运行宿主机已构建的 JAR；构建镜像前先执行 mvn package。
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+# ⚠ 关键：alpine JRE 镜像默认不带 curl，但 compose 健康检查需要
+# 装一下 curl（~2MB），比改成 wget 或自己写 Java 健康检查脚本省事
+RUN apk add --no-cache curl
+
+# 构建上下文是项目根目录，因此这里直接复制本地 target 目录中的 fat JAR。
+COPY target/botter-rag-1.0.0.jar app.jar
+
+EXPOSE 8090
+
+# JVM 参数说明：
+# - MaxRAMPercentage 75% ：根据容器 memory limit 自动算堆大小，换了内存不用改 Dockerfile
+# - UseG1GC             ：1-4GB 堆的首选 GC，低延迟 + 吞吐都不错（ZGC 是给 8GB+ 大堆设计的，小堆反而更耗 CPU/native 内存）
+# - ExitOnOutOfMemoryError：OOM 立刻退出容器，让 restart policy 重新拉起
+ENTRYPOINT ["java", \
+    "-XX:MaxRAMPercentage=75.0", \
+    "-XX:+UseG1GC", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "-Dfile.encoding=UTF-8", \
+    "-jar", "app.jar"]

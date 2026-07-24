@@ -8,10 +8,8 @@ spring:
       - optional:file:botter-rag/.env[.properties]
   application:
     name: botter-rag-kb
-  profiles:
-    active: prod
   datasource:
-    url: jdbc:postgresql://localhost:5432/ragkb
+    url: jdbc:postgresql://postgres:5432/ragkb
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:123456}
     driver-class-name: org.postgresql.Driver
@@ -39,9 +37,9 @@ spring:
   #redis
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:redis}
       port: 6379
-      password: ${REDIS_PASSWORD}
+      password: ${REDIS_PASSWORD:}
       database: 2
       lettuce:
         pool:
@@ -82,7 +80,7 @@ spring:
 
 # ========== MinIO ==========
 minio:
-  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  endpoint: ${MINIO_ENDPOINT:http://minio:9000}
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket: rag-documents
